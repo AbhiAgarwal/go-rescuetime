@@ -104,7 +104,7 @@ func checkError(err error) {
 }
 
 func (r *RescueTime) CheckAPIKey() {
-	if r.apiKey == "" {
+	if r.ApiKey == "" {
 		fmt.Println("Please provide API key")
 		os.Exit(1)
 	}
@@ -112,7 +112,7 @@ func (r *RescueTime) CheckAPIKey() {
 
 func (r *RescueTime) GetResponse(URL string) []byte {
 	r.CheckAPIKey()
-	response, err := http.Get(URL + "?key=" + r.apiKey + "&format=json")
+	response, err := http.Get(URL + "?key=" + r.ApiKey + "&format=json")
 	checkError(err)
 	defer response.Body.Close()
 	contents, err := ioutil.ReadAll(response.Body)
