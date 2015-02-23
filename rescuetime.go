@@ -16,7 +16,7 @@ const (
 )
 
 type RescueTime struct {
-	apiKey string
+	ApiKey string
 }
 
 type RescueTimeDailySummary struct {
