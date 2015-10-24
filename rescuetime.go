@@ -8,7 +8,9 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
+	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -88,11 +90,25 @@ type DailySummary struct {
 	VeryProductivePercentage                    float64 `json:"very_productive_percentage"`
 }
 
+// AnalyticDataQueryParameters is used to provide parameters to the Analytic Data API
+type AnalyticDataQueryParameters struct {
+	Perspective    string `field_name:"perspective"`
+	ResolutionTime string `field_name:"resolution_time"`
+	RestrictGroup  string `field_name:"restrict_group"`
+	RestrictBegin  string `field_name:"restrict_begin"`
+	RestrictEnd    string `field_name:"restrict_end"`
+	RestrictKind   string `field_name:"restrict_kind"`
+	RestrictThing  string `field_name:"restrict_thing"`
+	RestrictThingy string `field_name:"restrict_thingy"`
+}
+
 // AnalyticData describes an Analytic Data API result
 type AnalyticData struct {
-	Notes      string   `json:"notes"`
-	RowHeaders []string `json:"row_headers"`
-	Rows       []Row    `json:"rows"`
+	Notes      string                       `json:"notes"`
+	RowHeaders []string                     `json:"row_headers"`
+	Rows       []Row                        `json:"rows"`
+	Parameters *AnalyticDataQueryParameters `json:"-,omitempty"`
+	URL        string                       `json:"-,omitempty"`
 }
 
 // Row is a single row in an Analytic Data API result
@@ -107,18 +123,44 @@ type Row struct {
 	Productivity   *int       `json:"productivity,omitempty"`
 }
 
-func (r *RescueTime) buildURL(baseURL string, arguments ...[]string) (string, error) {
+func structToMap(i interface{}) (values url.Values) {
+	values = url.Values{}
+	iVal := reflect.ValueOf(i).Elem()
+	typ := iVal.Type()
+	for i := 0; i < iVal.NumField(); i++ {
+		f := iVal.Field(i)
+		// Convert each type into a string for the url.Values string map
+		var v string
+		switch f.Interface().(type) {
+		case int, int8, int16, int32, int64:
+			v = strconv.FormatInt(f.Int(), 10)
+		case uint, uint8, uint16, uint32, uint64:
+			v = strconv.FormatUint(f.Uint(), 10)
+		case float32:
+			v = strconv.FormatFloat(f.Float(), 'f', 4, 32)
+		case float64:
+			v = strconv.FormatFloat(f.Float(), 'f', 4, 64)
+		case []byte:
+			v = string(f.Bytes())
+		case string:
+			v = f.String()
+		}
+		if v == "" {
+			continue
+		}
+		values.Set(typ.Field(i).Tag.Get("field_name"), v)
+	}
+	return
+}
+
+func (r *RescueTime) buildURL(baseURL string, urlValues url.Values) (string, error) {
 	parsedURL, err := url.Parse(baseURL)
 	if err != nil {
 		return "", err
 	}
-	query := parsedURL.Query()
-	for _, argPair := range arguments {
-		query.Add(argPair[0], argPair[1])
-	}
-	query.Set("key", r.APIKey)
-	query.Set("format", "json")
-	parsedURL.RawQuery = query.Encode()
+	urlValues.Set("key", r.APIKey)
+	urlValues.Set("format", "json")
+	parsedURL.RawQuery = urlValues.Encode()
 	return parsedURL.String(), nil
 }
 
@@ -153,10 +195,12 @@ func (r *RescueTime) getResponse(getURL string) ([]byte, error) {
 
 // GetAnalyticData makes a request to the Analytic Data API with the provided (if any) arguments.
 // If a timezone is given, all dates will be located in the given timezone.
-func (r *RescueTime) GetAnalyticData(timezone string, arguments ...[]string) (AnalyticData, error) {
+func (r *RescueTime) GetAnalyticData(timezone string, parameters *AnalyticDataQueryParameters) (AnalyticData, error) {
 	var rtd AnalyticData
 
-	builtURL, err := r.buildURL(analyticDataURL, arguments...)
+	params := structToMap(parameters)
+
+	builtURL, err := r.buildURL(analyticDataURL, params)
 	if err != nil {
 		return rtd, err
 	}
@@ -170,7 +214,10 @@ func (r *RescueTime) GetAnalyticData(timezone string, arguments ...[]string) (An
 		return rtd, err
 	}
 
-	data := AnalyticData{}
+	data := AnalyticData{
+		Parameters: parameters,
+		URL:        builtURL,
+	}
 
 	var notes string
 	notes = fmt.Sprintf("%s", currentJSON.Get("notes").MustString())
@@ -221,9 +268,9 @@ func (r *RescueTime) GetAnalyticData(timezone string, arguments ...[]string) (An
 }
 
 // GetDailySummary returns the daily summary for the user.
-func (r *RescueTime) GetDailySummary(arguments ...[]string) ([]DailySummary, error) {
+func (r *RescueTime) GetDailySummary() ([]DailySummary, error) {
 	var summaries []DailySummary
-	builtURL, err := r.buildURL(dailySummaryURL, arguments...)
+	builtURL, err := r.buildURL(dailySummaryURL, url.Values{})
 	if err != nil {
 		return summaries, err
 	}
