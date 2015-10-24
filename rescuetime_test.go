@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-var RescueTimeApiKey = os.Getenv("RESCUE_TIME_KEY")
+var RescueTimeAPIKey = os.Getenv("RESCUE_TIME_KEY")
 
 func TestMain(m *testing.M) {
-	if RescueTimeApiKey == "" {
+	if RescueTimeAPIKey == "" {
 		fmt.Println("No API key provided in the RESCUE_TIME_KEY environment variable!")
 		os.Exit(1)
 	} else {
@@ -19,8 +19,8 @@ func TestMain(m *testing.M) {
 
 func TestDailySummary(t *testing.T) {
 	var rescue RescueTime
-	rescue.ApiKey = RescueTimeApiKey
-	response, err := rescue.DailySummary()
+	rescue.APIKey = RescueTimeAPIKey
+	response, err := rescue.GetDailySummary()
 	if err != nil {
 		t.Log(err)
 	}
@@ -29,8 +29,8 @@ func TestDailySummary(t *testing.T) {
 
 func TestGetData(t *testing.T) {
 	var rescue RescueTime
-	rescue.ApiKey = RescueTimeApiKey
-	response, err := rescue.GetData("")
+	rescue.APIKey = RescueTimeAPIKey
+	response, err := rescue.GetAnalyticData("")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -16,15 +16,17 @@ import (
 )
 
 const (
-	dataURL         string = "https://www.rescuetime.com/anapi/data"
+	analyticDataURL string = "https://www.rescuetime.com/anapi/data"
 	dailySummaryURL string = "https://www.rescuetime.com/anapi/daily_summary_feed"
 )
 
+// RescueTime contains the user's API key
 type RescueTime struct {
-	ApiKey string
+	APIKey string
 }
 
-type RescueTimeDailySummary struct {
+// DailySummary is a users summary for a single day
+type DailySummary struct {
 	AllDistractingDurationFormatted             string  `json:"all_distracting_duration_formatted"`
 	AllDistractingHours                         float64 `json:"all_distracting_hours"`
 	AllDistractingPercentage                    float64 `json:"all_distracting_percentage"`
@@ -86,13 +88,15 @@ type RescueTimeDailySummary struct {
 	VeryProductivePercentage                    float64 `json:"very_productive_percentage"`
 }
 
-type RescueTimeData struct {
-	Notes      string               `json:"notes"`
-	RowHeaders []string             `json:"row_headers"`
-	Rows       []MiniRescueTimeData `json:"rows"`
+// AnalyticData describes an Analytic Data API result
+type AnalyticData struct {
+	Notes      string   `json:"notes"`
+	RowHeaders []string `json:"row_headers"`
+	Rows       []Row    `json:"rows"`
 }
 
-type MiniRescueTimeData struct {
+// Row is a single row in an Analytic Data API result
+type Row struct {
 	Date           *time.Time `json:"date,omitempty"`
 	Rank           *int       `json:"rank,omitempty"`
 	TimeSpent      *int       `json:"timeSpentSeconds,omitempty"`
@@ -103,8 +107,8 @@ type MiniRescueTimeData struct {
 	Productivity   *int       `json:"productivity,omitempty"`
 }
 
-func (r *RescueTime) buildUrl(baseUrl string, arguments ...[]string) (string, error) {
-	parsedURL, err := url.Parse(baseUrl)
+func (r *RescueTime) buildURL(baseURL string, arguments ...[]string) (string, error) {
+	parsedURL, err := url.Parse(baseURL)
 	if err != nil {
 		return "", err
 	}
@@ -112,7 +116,7 @@ func (r *RescueTime) buildUrl(baseUrl string, arguments ...[]string) (string, er
 	for _, argPair := range arguments {
 		query.Add(argPair[0], argPair[1])
 	}
-	query.Set("key", r.ApiKey)
+	query.Set("key", r.APIKey)
 	query.Set("format", "json")
 	parsedURL.RawQuery = query.Encode()
 	return parsedURL.String(), nil
@@ -131,11 +135,11 @@ func camelCase(src string) string {
 	return string(bytes.Join(chunks, nil))
 }
 
-func (r *RescueTime) GetResponse(getUrl string) ([]byte, error) {
-	if r.ApiKey == "" {
+func (r *RescueTime) getResponse(getURL string) ([]byte, error) {
+	if r.APIKey == "" {
 		return nil, errors.New("Please provide API key")
 	}
-	response, err := http.Get(getUrl)
+	response, err := http.Get(getURL)
 	if err != nil {
 		return nil, err
 	}
@@ -147,15 +151,17 @@ func (r *RescueTime) GetResponse(getUrl string) ([]byte, error) {
 	return contents, nil
 }
 
-func (r *RescueTime) GetData(timezone string, arguments ...[]string) (RescueTimeData, error) {
-	var rtd RescueTimeData
+// GetAnalyticData makes a request to the Analytic Data API with the provided (if any) arguments.
+// If a timezone is given, all dates will be located in the given timezone.
+func (r *RescueTime) GetAnalyticData(timezone string, arguments ...[]string) (AnalyticData, error) {
+	var rtd AnalyticData
 
-	builtUrl, err := r.buildUrl(dataURL, arguments...)
+	builtURL, err := r.buildURL(analyticDataURL, arguments...)
 	if err != nil {
 		return rtd, err
 	}
 
-	contents, err := r.GetResponse(builtUrl)
+	contents, err := r.getResponse(builtURL)
 	if err != nil {
 		return rtd, err
 	}
@@ -164,7 +170,7 @@ func (r *RescueTime) GetData(timezone string, arguments ...[]string) (RescueTime
 		return rtd, err
 	}
 
-	data := RescueTimeData{}
+	data := AnalyticData{}
 
 	var notes string
 	notes = fmt.Sprintf("%s", currentJSON.Get("notes").MustString())
@@ -178,10 +184,10 @@ func (r *RescueTime) GetData(timezone string, arguments ...[]string) (RescueTime
 	}
 	data.RowHeaders = rowHeaders
 
-	var toAppend []MiniRescueTimeData
+	var toAppend []Row
 	for _, entry := range currentJSON.Get("rows").MustArray() {
 		out := simplejson.New()
-		var entryData MiniRescueTimeData
+		var entryData Row
 		for k, v := range entry.([]interface{}) {
 			switch headersMap[k] {
 			case "date":
@@ -214,17 +220,18 @@ func (r *RescueTime) GetData(timezone string, arguments ...[]string) (RescueTime
 	return data, nil
 }
 
-func (r *RescueTime) DailySummary(arguments ...[]string) ([]RescueTimeDailySummary, error) {
-	var summaries []RescueTimeDailySummary
-	builtUrl, err := r.buildUrl(dailySummaryURL, arguments...)
+// GetDailySummary returns the daily summary for the user.
+func (r *RescueTime) GetDailySummary(arguments ...[]string) ([]DailySummary, error) {
+	var summaries []DailySummary
+	builtURL, err := r.buildURL(dailySummaryURL, arguments...)
 	if err != nil {
 		return summaries, err
 	}
-	contents, err := r.GetResponse(builtUrl)
+	contents, err := r.getResponse(builtURL)
 	if err != nil {
 		return summaries, err
 	}
-	keys := make([]RescueTimeDailySummary, 0)
+	var keys []DailySummary
 	err = json.Unmarshal(contents, &keys)
 	if err != nil {
 		return summaries, err
