@@ -6,6 +6,6 @@ Sample use:
 
 ```go
 var rescue RescueTime
-rescue.apiKey = ""
-summary, err := rescue.DailySummary()
+rescue.APIKey = ""
+summary, err := rescue.GetDailySummary()
 ```
