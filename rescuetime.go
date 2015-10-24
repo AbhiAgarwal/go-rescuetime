@@ -1,12 +1,15 @@
 package rescuetime
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strings"
 	"time"
 
 	simplejson "github.com/bitly/go-simplejson"
@@ -90,13 +93,14 @@ type RescueTimeData struct {
 }
 
 type MiniRescueTimeData struct {
-	Date           time.Time     `json:"date,omitempty"`
-	Rank           int           `json:"rank,omitempty"`
-	TimeSpent      time.Duration `json:"time_spent,omitempty"`
-	NumberOfPeople int           `json:"number_of_people"`
-	Activity       string        `json:"activity"`
-	Category       string        `json:"category"`
-	Productivity   int           `json:"productivity"`
+	Date           *time.Time `json:"date,omitempty"`
+	Rank           *int       `json:"rank,omitempty"`
+	TimeSpent      *int       `json:"timeSpentSeconds,omitempty"`
+	NumberOfPeople *int       `json:"numberOfPeople,omitempty"`
+	Person         *string    `json:"person,omitempty"`
+	Activity       *string    `json:"activity,omitempty"`
+	Category       *string    `json:"category,omitempty"`
+	Productivity   *int       `json:"productivity,omitempty"`
 }
 
 func (r *RescueTime) buildUrl(baseUrl string, arguments ...[]string) (string, error) {
@@ -112,6 +116,19 @@ func (r *RescueTime) buildUrl(baseUrl string, arguments ...[]string) (string, er
 	query.Set("format", "json")
 	parsedURL.RawQuery = query.Encode()
 	return parsedURL.String(), nil
+}
+
+var camelingRegex = regexp.MustCompile("[0-9A-Za-z]+")
+
+func camelCase(src string) string {
+	byteSrc := []byte(src)
+	chunks := camelingRegex.FindAll(byteSrc, -1)
+	for idx, val := range chunks {
+		if idx > 0 {
+			chunks[idx] = bytes.Title(val)
+		}
+	}
+	return string(bytes.Join(chunks, nil))
 }
 
 func (r *RescueTime) GetResponse(getUrl string) ([]byte, error) {
@@ -142,49 +159,56 @@ func (r *RescueTime) GetData(timezone string, arguments ...[]string) (RescueTime
 	if err != nil {
 		return rtd, err
 	}
-	currentJSON := simplejson.New()
-	currentJSON.UnmarshalJSON(contents)
+	currentJSON, err := simplejson.NewJson(contents)
+	if err != nil {
+		return rtd, err
+	}
 
 	data := RescueTimeData{}
 
 	var notes string
-	notes = fmt.Sprintf("%s", (*currentJSON.Get("notes")).MustString())
+	notes = fmt.Sprintf("%s", currentJSON.Get("notes").MustString())
 	data.Notes = notes
 
 	var rowHeaders []string
-	rowHeaders, _ = (*currentJSON.Get("row_headers")).StringArray()
+	headersMap := make(map[int]string)
+	for i, s := range currentJSON.Get("row_headers").MustStringArray() {
+		rowHeaders = append(rowHeaders, s)
+		headersMap[i] = camelCase(strings.ToLower(s))
+	}
 	data.RowHeaders = rowHeaders
 
 	var toAppend []MiniRescueTimeData
-	for i := 0; i < 36; i++ {
-		rows := (*currentJSON.Get("rows")).GetIndex(i)
-		current := MiniRescueTimeData{}
-		if rowHeaders[0] == "Date" {
-			date, _ := (*rows).GetIndex(0).String()
-			parsed, err := time.Parse("2006-01-02T15:04:05", date)
-			if timezone != "" {
-				location, err := time.LoadLocation(timezone)
+	for _, entry := range currentJSON.Get("rows").MustArray() {
+		out := simplejson.New()
+		var entryData MiniRescueTimeData
+		for k, v := range entry.([]interface{}) {
+			switch headersMap[k] {
+			case "date":
+				parsed, err := time.Parse("2006-01-02T15:04:05", v.(string))
 				if err != nil {
 					return rtd, err
 				}
-				parsed = parsed.In(location)
+				if timezone != "" {
+					location, err := time.LoadLocation(timezone)
+					if err != nil {
+						return rtd, err
+					}
+					parsed = parsed.In(location)
+				}
+				v = parsed.Format(time.RFC3339)
 			}
-			if err != nil {
-				return rtd, err
-			}
-			current.Date = parsed
+			out.Set(headersMap[k], v)
 		}
-		if rowHeaders[0] == "Rank" {
-			current.Rank, _ = (*rows).GetIndex(0).Int()
+		encoded, err := out.Encode()
+		if err != nil {
+			return rtd, err
 		}
-		timeSpent, _ := (*rows).GetIndex(1).Int()
-		timeDuration := time.Duration(timeSpent) * time.Second
-		current.TimeSpent = timeDuration
-		current.NumberOfPeople, _ = (*rows).GetIndex(2).Int()
-		current.Activity, _ = (*rows).GetIndex(3).String()
-		current.Category, _ = (*rows).GetIndex(4).String()
-		current.Productivity, _ = (*rows).GetIndex(5).Int()
-		toAppend = append(toAppend, current)
+		err = json.Unmarshal(encoded, &entryData)
+		if err != nil {
+			return rtd, err
+		}
+		toAppend = append(toAppend, entryData)
 	}
 	data.Rows = toAppend
 	return data, nil
