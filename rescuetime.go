@@ -2,10 +2,12 @@ package rescuetime
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
-	"os"
+	"net/url"
+	"time"
 
 	simplejson "github.com/bitly/go-simplejson"
 )
@@ -88,40 +90,58 @@ type RescueTimeData struct {
 }
 
 type MiniRescueTimeData struct {
-	Rank           int    `json:"rank"`
-	TimeSpent      int    `json:"time_spent"`
-	NumberOfPeople int    `json:"number_of_people"`
-	Activity       string `json:"activity"`
-	Category       string `json:"category"`
-	Productivity   int    `json:"productivity"`
+	Date           time.Time     `json:"date,omitempty"`
+	Rank           int           `json:"rank,omitempty"`
+	TimeSpent      time.Duration `json:"time_spent,omitempty"`
+	NumberOfPeople int           `json:"number_of_people"`
+	Activity       string        `json:"activity"`
+	Category       string        `json:"category"`
+	Productivity   int           `json:"productivity"`
 }
 
-func checkError(err error) {
+func (r *RescueTime) buildUrl(baseUrl string, arguments ...[]string) (string, error) {
+	parsedURL, err := url.Parse(baseUrl)
 	if err != nil {
-		fmt.Printf("%s", err)
-		os.Exit(1)
+		return "", err
 	}
+	query := parsedURL.Query()
+	for _, argPair := range arguments {
+		query.Add(argPair[0], argPair[1])
+	}
+	query.Set("key", r.ApiKey)
+	query.Set("format", "json")
+	parsedURL.RawQuery = query.Encode()
+	return parsedURL.String(), nil
 }
 
-func (r *RescueTime) CheckAPIKey() {
+func (r *RescueTime) GetResponse(getUrl string) ([]byte, error) {
 	if r.ApiKey == "" {
-		fmt.Println("Please provide API key")
-		os.Exit(1)
+		return nil, errors.New("Please provide API key")
 	}
-}
-
-func (r *RescueTime) GetResponse(URL string) []byte {
-	r.CheckAPIKey()
-	response, err := http.Get(URL + "?key=" + r.ApiKey + "&format=json")
-	checkError(err)
+	response, err := http.Get(getUrl)
+	if err != nil {
+		return nil, err
+	}
 	defer response.Body.Close()
 	contents, err := ioutil.ReadAll(response.Body)
-	checkError(err)
-	return contents
+	if err != nil {
+		return nil, err
+	}
+	return contents, nil
 }
 
-func (r *RescueTime) GetData() RescueTimeData {
-	contents := r.GetResponse(dataURL)
+func (r *RescueTime) GetData(timezone string, arguments ...[]string) (RescueTimeData, error) {
+	var rtd RescueTimeData
+
+	builtUrl, err := r.buildUrl(dataURL, arguments...)
+	if err != nil {
+		return rtd, err
+	}
+
+	contents, err := r.GetResponse(builtUrl)
+	if err != nil {
+		return rtd, err
+	}
 	currentJSON := simplejson.New()
 	currentJSON.UnmarshalJSON(contents)
 
@@ -139,8 +159,27 @@ func (r *RescueTime) GetData() RescueTimeData {
 	for i := 0; i < 36; i++ {
 		rows := (*currentJSON.Get("rows")).GetIndex(i)
 		current := MiniRescueTimeData{}
-		current.Rank, _ = (*rows).GetIndex(0).Int()
-		current.TimeSpent, _ = (*rows).GetIndex(1).Int()
+		if rowHeaders[0] == "Date" {
+			date, _ := (*rows).GetIndex(0).String()
+			parsed, err := time.Parse("2006-01-02T15:04:05", date)
+			if timezone != "" {
+				location, err := time.LoadLocation(timezone)
+				if err != nil {
+					return rtd, err
+				}
+				parsed = parsed.In(location)
+			}
+			if err != nil {
+				return rtd, err
+			}
+			current.Date = parsed
+		}
+		if rowHeaders[0] == "Rank" {
+			current.Rank, _ = (*rows).GetIndex(0).Int()
+		}
+		timeSpent, _ := (*rows).GetIndex(1).Int()
+		timeDuration := time.Duration(timeSpent) * time.Second
+		current.TimeSpent = timeDuration
 		current.NumberOfPeople, _ = (*rows).GetIndex(2).Int()
 		current.Activity, _ = (*rows).GetIndex(3).String()
 		current.Category, _ = (*rows).GetIndex(4).String()
@@ -148,13 +187,23 @@ func (r *RescueTime) GetData() RescueTimeData {
 		toAppend = append(toAppend, current)
 	}
 	data.Rows = toAppend
-	return data
+	return data, nil
 }
 
-func (r *RescueTime) DailySummary() []RescueTimeDailySummary {
-	contents := r.GetResponse(dailySummaryURL)
+func (r *RescueTime) DailySummary(arguments ...[]string) ([]RescueTimeDailySummary, error) {
+	var summaries []RescueTimeDailySummary
+	builtUrl, err := r.buildUrl(dailySummaryURL, arguments...)
+	if err != nil {
+		return summaries, err
+	}
+	contents, err := r.GetResponse(builtUrl)
+	if err != nil {
+		return summaries, err
+	}
 	keys := make([]RescueTimeDailySummary, 0)
-	err := json.Unmarshal(contents, &keys)
-	checkError(err)
-	return keys
+	err = json.Unmarshal(contents, &keys)
+	if err != nil {
+		return summaries, err
+	}
+	return keys, nil
 }

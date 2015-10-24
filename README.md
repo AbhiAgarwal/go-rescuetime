@@ -7,5 +7,5 @@ Sample use:
 ```go
 var rescue RescueTime
 rescue.apiKey = ""
-rescue.DailySummary()
+summary, err := rescue.DailySummary()
 ```
