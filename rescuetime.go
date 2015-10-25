@@ -190,8 +190,8 @@ func (r *RescueTime) getResponse(getURL string) ([]byte, error) {
 	return contents, nil
 }
 
-// GetAnalyticData makes a request to the Analytic Data API with the provided (if any) arguments.
-// If a timezone is given, all dates will be located in the given timezone.
+// GetAnalyticData makes a request to the Analytic Data API with the provided parameters.
+// If a timezone is given, all dates will be located in the given timezone, otherwise system's local timezone.
 func (r *RescueTime) GetAnalyticData(timezone string, parameters *AnalyticDataQueryParameters) (AnalyticData, error) {
 	var rtd AnalyticData
 
