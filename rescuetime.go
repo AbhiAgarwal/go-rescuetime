@@ -11,7 +11,6 @@ import (
 	"reflect"
 	"regexp"
 	"strconv"
-	"strings"
 	"time"
 
 	simplejson "github.com/bitly/go-simplejson"
@@ -108,19 +107,18 @@ type AnalyticData struct {
 	RowHeaders []string                     `json:"row_headers"`
 	Rows       []Row                        `json:"rows"`
 	Parameters *AnalyticDataQueryParameters `json:"-,omitempty"`
-	URL        string                       `json:"-,omitempty"`
 }
 
 // Row is a single row in an Analytic Data API result
 type Row struct {
-	Date           *time.Time `json:"date,omitempty"`
-	Rank           *int       `json:"rank,omitempty"`
-	TimeSpent      *int       `json:"timeSpentSeconds,omitempty"`
-	NumberOfPeople *int       `json:"numberOfPeople,omitempty"`
-	Person         *string    `json:"person,omitempty"`
-	Activity       *string    `json:"activity,omitempty"`
-	Category       *string    `json:"category,omitempty"`
-	Productivity   *int       `json:"productivity,omitempty"`
+	Date             time.Time
+	Rank             int
+	TimeSpentSeconds int
+	NumberOfPeople   int
+	Person           string
+	Activity         string
+	Category         string
+	Productivity     int
 }
 
 func structToMap(i interface{}) (values url.Values) {
@@ -164,15 +162,13 @@ func (r *RescueTime) buildURL(baseURL string, urlValues url.Values) (string, err
 	return parsedURL.String(), nil
 }
 
-var camelingRegex = regexp.MustCompile("[0-9A-Za-z]+")
+var titlingRegex = regexp.MustCompile("[0-9A-Za-z]+")
 
-func camelCase(src string) string {
+func titleCase(src string) string {
 	byteSrc := []byte(src)
-	chunks := camelingRegex.FindAll(byteSrc, -1)
+	chunks := titlingRegex.FindAll(byteSrc, -1)
 	for idx, val := range chunks {
-		if idx > 0 {
-			chunks[idx] = bytes.Title(val)
-		}
+		chunks[idx] = bytes.Title(val)
 	}
 	return string(bytes.Join(chunks, nil))
 }
@@ -216,7 +212,6 @@ func (r *RescueTime) GetAnalyticData(timezone string, parameters *AnalyticDataQu
 
 	data := AnalyticData{
 		Parameters: parameters,
-		URL:        builtURL,
 	}
 
 	var notes string
@@ -225,20 +220,28 @@ func (r *RescueTime) GetAnalyticData(timezone string, parameters *AnalyticDataQu
 
 	var rowHeaders []string
 	headersMap := make(map[int]string)
+	headerRegex := regexp.MustCompile("[^A-Za-z0-9]+")
 	for i, s := range currentJSON.Get("row_headers").MustStringArray() {
 		rowHeaders = append(rowHeaders, s)
-		headersMap[i] = camelCase(strings.ToLower(s))
+		headersMap[i] = headerRegex.ReplaceAllString(titleCase(s), "")
 	}
 	data.RowHeaders = rowHeaders
 
 	var toAppend []Row
 	for _, entry := range currentJSON.Get("rows").MustArray() {
-		out := simplejson.New()
-		var entryData Row
-		for k, v := range entry.([]interface{}) {
-			switch headersMap[k] {
-			case "date":
-				parsed, err := time.Parse("2006-01-02T15:04:05", v.(string))
+		var aRow Row
+		for index, column := range entry.([]interface{}) {
+			thisHeader := headersMap[index]
+			field := reflect.ValueOf(&aRow).Elem().FieldByName(thisHeader)
+			switch field.Interface().(type) {
+			case int, int8, int16, int32, int64:
+				intValue, err := column.(json.Number).Int64()
+				if err != nil {
+					return data, err
+				}
+				field.SetInt(intValue)
+			case time.Time:
+				parsed, err := time.Parse("2006-01-02T15:04:05", column.(string))
 				if err != nil {
 					return rtd, err
 				}
@@ -249,19 +252,12 @@ func (r *RescueTime) GetAnalyticData(timezone string, parameters *AnalyticDataQu
 					}
 					parsed = parsed.In(location)
 				}
-				v = parsed.Format(time.RFC3339)
+				field.Set(reflect.ValueOf(parsed))
+			default:
+				field.Set(reflect.ValueOf(column))
 			}
-			out.Set(headersMap[k], v)
 		}
-		encoded, err := out.Encode()
-		if err != nil {
-			return rtd, err
-		}
-		err = json.Unmarshal(encoded, &entryData)
-		if err != nil {
-			return rtd, err
-		}
-		toAppend = append(toAppend, entryData)
+		toAppend = append(toAppend, aRow)
 	}
 	data.Rows = toAppend
 	return data, nil
