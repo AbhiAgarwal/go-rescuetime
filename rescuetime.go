@@ -112,14 +112,14 @@ type AnalyticData struct {
 
 // Row is a single row in an Analytic Data API result
 type row struct {
-	Date             time.Time
-	Rank             int
-	TimeSpentSeconds int
-	NumberOfPeople   int
-	Person           string
-	Activity         string
-	Category         string
-	Productivity     int
+	Date             time.Time `json:"date,omitempty"`
+	Rank             int       `json:"rank,omitempty"`
+	TimeSpentSeconds int       `json:"timeSpentSeconds,omitempty"`
+	NumberOfPeople   int       `json:"numberOfPeople,omitempty"`
+	Person           string    `json:"person,omitempty"`
+	Activity         string    `json:"activity,omitempty"`
+	Category         string    `json:"category,omitempty"`
+	Productivity     int       `json:"productivity,omitempty"`
 }
 
 func structToMap(i interface{}) (values url.Values) {
