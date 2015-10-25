@@ -106,12 +106,12 @@ type AnalyticDataQueryParameters struct {
 type AnalyticData struct {
 	Notes      string                       `json:"notes"`
 	RowHeaders []string                     `json:"row_headers"`
-	Rows       []Row                        `json:"rows"`
+	Rows       []row                        `json:"rows"`
 	Parameters *AnalyticDataQueryParameters `json:"-,omitempty"`
 }
 
 // Row is a single row in an Analytic Data API result
-type Row struct {
+type row struct {
 	Date             time.Time
 	Rank             int
 	TimeSpentSeconds int
@@ -230,7 +230,7 @@ func (r *RescueTime) GetAnalyticData(timezone string, parameters *AnalyticDataQu
 
 	var toAppend []Row
 	for _, entry := range currentJSON.Get("rows").MustArray() {
-		var aRow Row
+		var aRow row
 		for index, column := range entry.([]interface{}) {
 			thisHeader := headersMap[index]
 			field := reflect.ValueOf(&aRow).Elem().FieldByName(thisHeader)
