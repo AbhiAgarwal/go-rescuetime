@@ -228,7 +228,7 @@ func (r *RescueTime) GetAnalyticData(timezone string, parameters *AnalyticDataQu
 	}
 	data.RowHeaders = rowHeaders
 
-	var toAppend []Row
+	var toAppend []row
 	for _, entry := range currentJSON.Get("rows").MustArray() {
 		var aRow row
 		for index, column := range entry.([]interface{}) {
