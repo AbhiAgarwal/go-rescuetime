@@ -1,3 +1,4 @@
+// Package rescuetime provides a Golang library for the RescueTime API
 package rescuetime
 
 import (
