@@ -1,25 +1,34 @@
+// Package rescuetime provides a Golang library for the RescueTime API
 package rescuetime
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
-	"os"
+	"net/url"
+	"reflect"
+	"regexp"
+	"strconv"
+	"time"
 
 	simplejson "github.com/bitly/go-simplejson"
 )
 
 const (
-	dataURL         string = "https://www.rescuetime.com/anapi/data"
+	analyticDataURL string = "https://www.rescuetime.com/anapi/data"
 	dailySummaryURL string = "https://www.rescuetime.com/anapi/daily_summary_feed"
 )
 
+// RescueTime contains the user's API key
 type RescueTime struct {
-	ApiKey string
+	APIKey string
 }
 
-type RescueTimeDailySummary struct {
+// DailySummary is a users summary for a single day
+type DailySummary struct {
 	AllDistractingDurationFormatted             string  `json:"all_distracting_duration_formatted"`
 	AllDistractingHours                         float64 `json:"all_distracting_hours"`
 	AllDistractingPercentage                    float64 `json:"all_distracting_percentage"`
@@ -81,80 +90,197 @@ type RescueTimeDailySummary struct {
 	VeryProductivePercentage                    float64 `json:"very_productive_percentage"`
 }
 
-type RescueTimeData struct {
-	Notes      string               `json:"notes"`
-	RowHeaders []string             `json:"row_headers"`
-	Rows       []MiniRescueTimeData `json:"rows"`
+// AnalyticDataQueryParameters is used to provide parameters to the Analytic Data API
+type AnalyticDataQueryParameters struct {
+	Perspective    string `field_name:"perspective"`
+	ResolutionTime string `field_name:"resolution_time"`
+	RestrictGroup  string `field_name:"restrict_group"`
+	RestrictBegin  string `field_name:"restrict_begin"`
+	RestrictEnd    string `field_name:"restrict_end"`
+	RestrictKind   string `field_name:"restrict_kind"`
+	RestrictThing  string `field_name:"restrict_thing"`
+	RestrictThingy string `field_name:"restrict_thingy"`
 }
 
-type MiniRescueTimeData struct {
-	Rank           int    `json:"rank"`
-	TimeSpent      int    `json:"time_spent"`
-	NumberOfPeople int    `json:"number_of_people"`
-	Activity       string `json:"activity"`
-	Category       string `json:"category"`
-	Productivity   int    `json:"productivity"`
+// AnalyticData describes an Analytic Data API result
+type AnalyticData struct {
+	Notes      string                       `json:"notes"`
+	RowHeaders []string                     `json:"row_headers"`
+	Rows       []row                        `json:"rows"`
+	Parameters *AnalyticDataQueryParameters `json:"-,omitempty"`
 }
 
-func checkError(err error) {
+// Row is a single row in an Analytic Data API result
+type row struct {
+	Date             time.Time `json:"date,omitempty"`
+	Rank             int       `json:"rank,omitempty"`
+	TimeSpentSeconds int       `json:"timeSpentSeconds,omitempty"`
+	NumberOfPeople   int       `json:"numberOfPeople,omitempty"`
+	Person           string    `json:"person,omitempty"`
+	Activity         string    `json:"activity,omitempty"`
+	Category         string    `json:"category,omitempty"`
+	Productivity     int       `json:"productivity,omitempty"`
+}
+
+func structToMap(i interface{}) (values url.Values) {
+	values = url.Values{}
+	iVal := reflect.ValueOf(i).Elem()
+	typ := iVal.Type()
+	for i := 0; i < iVal.NumField(); i++ {
+		f := iVal.Field(i)
+		// Convert each type into a string for the url.Values string map
+		var v string
+		switch f.Interface().(type) {
+		case int, int8, int16, int32, int64:
+			v = strconv.FormatInt(f.Int(), 10)
+		case uint, uint8, uint16, uint32, uint64:
+			v = strconv.FormatUint(f.Uint(), 10)
+		case float32:
+			v = strconv.FormatFloat(f.Float(), 'f', 4, 32)
+		case float64:
+			v = strconv.FormatFloat(f.Float(), 'f', 4, 64)
+		case []byte:
+			v = string(f.Bytes())
+		case string:
+			v = f.String()
+		}
+		if v == "" {
+			continue
+		}
+		values.Set(typ.Field(i).Tag.Get("field_name"), v)
+	}
+	return
+}
+
+func (r *RescueTime) buildURL(baseURL string, urlValues url.Values) (string, error) {
+	parsedURL, err := url.Parse(baseURL)
 	if err != nil {
-		fmt.Printf("%s", err)
-		os.Exit(1)
+		return "", err
 	}
+	urlValues.Set("key", r.APIKey)
+	urlValues.Set("format", "json")
+	parsedURL.RawQuery = urlValues.Encode()
+	return parsedURL.String(), nil
 }
 
-func (r *RescueTime) CheckAPIKey() {
-	if r.ApiKey == "" {
-		fmt.Println("Please provide API key")
-		os.Exit(1)
+var titlingRegex = regexp.MustCompile("[0-9A-Za-z]+")
+
+func titleCase(src string) string {
+	byteSrc := []byte(src)
+	chunks := titlingRegex.FindAll(byteSrc, -1)
+	for idx, val := range chunks {
+		chunks[idx] = bytes.Title(val)
 	}
+	return string(bytes.Join(chunks, nil))
 }
 
-func (r *RescueTime) GetResponse(URL string) []byte {
-	r.CheckAPIKey()
-	response, err := http.Get(URL + "?key=" + r.ApiKey + "&format=json")
-	checkError(err)
+func (r *RescueTime) getResponse(getURL string) ([]byte, error) {
+	if r.APIKey == "" {
+		return nil, errors.New("Please provide API key")
+	}
+	response, err := http.Get(getURL)
+	if err != nil {
+		return nil, err
+	}
 	defer response.Body.Close()
 	contents, err := ioutil.ReadAll(response.Body)
-	checkError(err)
-	return contents
+	if err != nil {
+		return nil, err
+	}
+	return contents, nil
 }
 
-func (r *RescueTime) GetData() RescueTimeData {
-	contents := r.GetResponse(dataURL)
-	currentJSON := simplejson.New()
-	currentJSON.UnmarshalJSON(contents)
+// GetAnalyticData makes a request to the Analytic Data API with the provided parameters.
+// If a timezone is given, all dates will be located in the given timezone, otherwise system's local timezone.
+func (r *RescueTime) GetAnalyticData(timezone string, parameters *AnalyticDataQueryParameters) (AnalyticData, error) {
+	var rtd AnalyticData
 
-	data := RescueTimeData{}
+	params := structToMap(parameters)
+
+	builtURL, err := r.buildURL(analyticDataURL, params)
+	if err != nil {
+		return rtd, err
+	}
+
+	contents, err := r.getResponse(builtURL)
+	if err != nil {
+		return rtd, err
+	}
+	currentJSON, err := simplejson.NewJson(contents)
+	if err != nil {
+		return rtd, err
+	}
+
+	data := AnalyticData{
+		Parameters: parameters,
+	}
 
 	var notes string
-	notes = fmt.Sprintf("%s", (*currentJSON.Get("notes")).MustString())
+	notes = fmt.Sprintf("%s", currentJSON.Get("notes").MustString())
 	data.Notes = notes
 
 	var rowHeaders []string
-	rowHeaders, _ = (*currentJSON.Get("row_headers")).StringArray()
+	headersMap := make(map[int]string)
+	headerRegex := regexp.MustCompile("[^A-Za-z0-9]+")
+	for i, s := range currentJSON.Get("row_headers").MustStringArray() {
+		rowHeaders = append(rowHeaders, s)
+		headersMap[i] = headerRegex.ReplaceAllString(titleCase(s), "")
+	}
 	data.RowHeaders = rowHeaders
 
-	var toAppend []MiniRescueTimeData
-	for i := 0; i < 36; i++ {
-		rows := (*currentJSON.Get("rows")).GetIndex(i)
-		current := MiniRescueTimeData{}
-		current.Rank, _ = (*rows).GetIndex(0).Int()
-		current.TimeSpent, _ = (*rows).GetIndex(1).Int()
-		current.NumberOfPeople, _ = (*rows).GetIndex(2).Int()
-		current.Activity, _ = (*rows).GetIndex(3).String()
-		current.Category, _ = (*rows).GetIndex(4).String()
-		current.Productivity, _ = (*rows).GetIndex(5).Int()
-		toAppend = append(toAppend, current)
+	var toAppend []row
+	for _, entry := range currentJSON.Get("rows").MustArray() {
+		var aRow row
+		for index, column := range entry.([]interface{}) {
+			thisHeader := headersMap[index]
+			field := reflect.ValueOf(&aRow).Elem().FieldByName(thisHeader)
+			switch field.Interface().(type) {
+			case int, int8, int16, int32, int64:
+				intValue, err := column.(json.Number).Int64()
+				if err != nil {
+					return data, err
+				}
+				field.SetInt(intValue)
+			case time.Time:
+				parsed, err := time.Parse("2006-01-02T15:04:05", column.(string))
+				if err != nil {
+					return rtd, err
+				}
+				if timezone != "" {
+					location, err := time.LoadLocation(timezone)
+					if err != nil {
+						return rtd, err
+					}
+					parsed = parsed.In(location)
+				}
+				field.Set(reflect.ValueOf(parsed))
+			default:
+				field.Set(reflect.ValueOf(column))
+			}
+		}
+		toAppend = append(toAppend, aRow)
 	}
 	data.Rows = toAppend
-	return data
+	return data, nil
 }
 
-func (r *RescueTime) DailySummary() []RescueTimeDailySummary {
-	contents := r.GetResponse(dailySummaryURL)
-	keys := make([]RescueTimeDailySummary, 0)
-	err := json.Unmarshal(contents, &keys)
-	checkError(err)
-	return keys
+// GetDailySummary returns the last two weeks of daily summaries for the user.
+// It does not include the current day, and new summaries for the previous day
+// are available at 12:01 am in the user’s local time zone.
+func (r *RescueTime) GetDailySummary() ([]DailySummary, error) {
+	var summaries []DailySummary
+	builtURL, err := r.buildURL(dailySummaryURL, url.Values{})
+	if err != nil {
+		return summaries, err
+	}
+	contents, err := r.getResponse(builtURL)
+	if err != nil {
+		return summaries, err
+	}
+	var keys []DailySummary
+	err = json.Unmarshal(contents, &keys)
+	if err != nil {
+		return summaries, err
+	}
+	return keys, nil
 }
