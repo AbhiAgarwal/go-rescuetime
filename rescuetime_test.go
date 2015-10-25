@@ -30,7 +30,7 @@ func TestDailySummary(t *testing.T) {
 func TestGetData(t *testing.T) {
 	var rescue RescueTime
 	rescue.APIKey = RescueTimeAPIKey
-	response, err := rescue.GetAnalyticData("")
+	response, err := rescue.GetAnalyticData("", &AnalyticDataQueryParameters{})
 	if err != nil {
 		t.Fatal(err)
 	}
