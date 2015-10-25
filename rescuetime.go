@@ -264,7 +264,9 @@ func (r *RescueTime) GetAnalyticData(timezone string, parameters *AnalyticDataQu
 	return data, nil
 }
 
-// GetDailySummary returns the daily summary for the user.
+// GetDailySummary returns the last two weeks of daily summaries for the user.
+// It does not include the current day, and new summaries for the previous day
+// are available at 12:01 am in the user’s local time zone.
 func (r *RescueTime) GetDailySummary() ([]DailySummary, error) {
 	var summaries []DailySummary
 	builtURL, err := r.buildURL(dailySummaryURL, url.Values{})
